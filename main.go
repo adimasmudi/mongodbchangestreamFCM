@@ -97,9 +97,8 @@ type OID struct{
 
 ////////////Firebase config
 
-func SetupFirebase() (*firebase.App, context.Context, *messaging.Client) {
+func SetupFirebase() (*firebase.App) {
 
-    ctx := context.Background()
 
     serviceAccountKeyFilePath, err := filepath.Abs("./changestream-private-key.json")
     if err != nil {
@@ -114,39 +113,20 @@ func SetupFirebase() (*firebase.App, context.Context, *messaging.Client) {
         panic("Firebase load error")
     }
 
-    //Messaging client
-    client, _ := app.Messaging(ctx)
 
-    return app, ctx, client
+    return app
 }
 
-func sendToToken(app *firebase.App, Message NotificationPayload) {
-	ctx := context.Background()
-	client, err := app.Messaging(ctx)
-	if err != nil {
-		log.Fatalf("error getting Messaging client: %v\n", err)
-	}
-
-	registrationToken := os.Getenv("Registration_Token")
-
-	message := &messaging.Message{
-		Notification: &messaging.Notification{
-			Title: Message.Title,
-			Body:  Message.Content,
-		},
-		Token: registrationToken,
-	}
-
-	response, err := client.Send(ctx, message)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println("Successfully sent message:", response)
-}
 
 
 
 func main() {
+	err := godotenv.Load()
+
+	if err != nil {
+		log.Fatal("Error loading .env file", err.Error())
+	}
+
 	app := fiber.New()
 
 	app.Use(cors.New(cors.Config{
@@ -161,7 +141,7 @@ func main() {
 	var noficationCollection *mongo.Collection = GetCollection(DB,"notification")
 
 	// firebase
-	appFirebase, _, _ := SetupFirebase()
+	appFirebase := SetupFirebase()
 	
 	app.Post("/add", func (c *fiber.Ctx) error {
 
@@ -200,6 +180,7 @@ func main() {
 	}
 
 	go func (){
+		ctx := context.Background()
 		for changeStream.Next(context.TODO()) {
 			var notif FullDocument
 			change := changeStream.Current
@@ -222,7 +203,28 @@ func main() {
 			newNotif.Title = notif.FullDocument.Title
 			newNotif.Content = notif.FullDocument.Content
 
-			sendToToken(appFirebase, newNotif)
+			fmt.Println("ready to send")
+
+			client, err := appFirebase.Messaging(ctx)
+			if err != nil {
+				log.Fatalf("error getting Messaging client: %v\n", err)
+			}
+
+			registrationToken := os.Getenv("Registration_Token")
+
+			message := &messaging.Message{
+				Notification: &messaging.Notification{
+					Title: newNotif.Title,
+					Body:  newNotif.Content,
+				},
+				Token: registrationToken,
+			}
+
+			response, err := client.Send(ctx, message)
+			if err != nil {
+				log.Fatalln(err.Error())
+			}
+			fmt.Println("Successfully sent message:", response)
 
 		
 		}
